@@ -1,4 +1,9 @@
 import express from "express";
+import cors from "cors"; // Import using ES module syntax
+
+// const PORT = 8080;
+// const HOST = "192.168.100.4";
+
 import {
   authenticateUser,
   shareCopyOfLedgerWithAccessKey,
@@ -27,11 +32,15 @@ app.use(express.json());
 // USERS
 app.post("/login", async (req, res) => {
   const { mobile_phone_number } = req.body;
+
+  console.log("Login request received", req.body);
+
   try {
     const { user, token } = await authenticateUser(mobile_phone_number);
     res.status(200).send({ user, token });
   } catch (error) {
     res.status(400).send({ error: error.message });
+    console.log("Login error", error.message);
   }
 });
 app.post("/register", async (req, res) => {
@@ -93,10 +102,11 @@ app.put("/ledgers/:ledger_id", async (req, res) => {
     res.status(500).send({ error: "Failed to update ledger" });
   }
 });
-app.delete("/ledgers/:ledger_id", async (req, res) => {
+app.delete("/ledgers/:user_id/:ledger_id", async (req, res) => {
   const ledger_id = req.params.ledger_id;
+  const user_id = req.params.user_id;
   try {
-    const result = await deleteLedgerByLedgerID(ledger_id);
+    const result = await deleteLedgerByLedgerID(user_id, ledger_id);
     res.send(result);
   } catch (error) {
     console.error("Error deleting ledger:", error);
@@ -284,6 +294,16 @@ app.use((err, req, res, next) => {
   res.status(500).send("Something broke!");
 });
 
+app.use(cors()); // Use CORS middleware
+
 app.listen(8080, () => {
   console.log("Server is running on port 8080");
 });
+
+// app.listen(PORT, HOST, () => {
+//   console.log(`Server running at http://${HOST}:${PORT}`);
+// });
+
+// app.listen(8080, "0.0.0.0", () => {
+//   console.log("Server is running on port 8080");
+// });

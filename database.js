@@ -68,11 +68,12 @@ export async function authenticateUser(mobile_phone_number) {
         expiresIn: "1h", // Token expires in 1 hour
       }
     );
-
+    console.log("User has been found:")
     return { user, token, error: null }; // Return the user and token if found
   } catch (error) {
     console.error("Error authenticating user:", error);
     // Handle the error without throwing it
+    console.log("User has not been found:")
     return { user: null, token: null, error: error.message };
   }
 }
@@ -105,7 +106,7 @@ export async function createNewUser(user_name, mobile_phone_number) {
   }
 }
 
-//   LEDGERS
+//  LEDGERS
 export async function getAllLedgers() {
   const [rows] = await pool.query("SELECT * FROM ledgers");
   return rows;
@@ -114,10 +115,15 @@ export async function getAllLedgersByUserID(user_id) {
   try {
     const [result] = await pool.query(
       `
-        SELECT DISTINCT l.ledger_id, l.* 
+        SELECT DISTINCT l.*
         FROM ledgers l
-        LEFT JOIN ledger_sharing ls ON l.ledger_id = ls.ledger_id
-        WHERE l.user_id = ? OR ls.user_id = ?
+        WHERE l.user_id = ?
+
+        UNION
+
+        SELECT DISTINCT ls.*
+        FROM ledger_sharing ls
+        WHERE ls.user_id = ?
     `,
       [user_id, user_id]
     );
@@ -135,26 +141,30 @@ export async function getAllLedgersByUserID(user_id) {
 }
 export async function createLedgerByUserID(user_id, ledger_name) {
   try {
+    // Generate a unique 10-character access_key
+    const access_key = generateRandomString();
+
+    // Insert the new ledger with access_key
     const [result] = await pool.query(
       `
-            INSERT INTO ledgers (user_id, ledger_name, created_at, updated_at) 
-            VALUES (?, ?, NOW(), NOW())
-          `,
-      [user_id, ledger_name]
+        INSERT INTO ledgers (user_id, ledger_name, access_key, created_at, updated_at) 
+        VALUES (?, ?, ?, NOW(), NOW())
+      `,
+      [user_id, ledger_name, access_key]
     );
+
     if (result.affectedRows === 0) {
-      //   throw new Error(`Error creating new ledger for user id ${user_id}`);
       console.log(`Error creating new ledger for user id ${user_id}`);
       return { error: "Error creating new ledger" };
     } else {
       return {
         ledger_id: result.insertId,
+        access_key, // Return the generated access_key
         message: "Ledger created successfully",
       };
     }
   } catch (error) {
     console.error("Error creating ledger:", error);
-    // throw error;
     return { error: "Error creating ledger" };
   }
 }
@@ -182,19 +192,41 @@ export async function updateLedgerByLedgerID(ledger_id, ledger_name) {
     return { error: "Error updating ledger" };
   }
 }
-export async function deleteLedgerByLedgerID(ledger_id) {
+export async function deleteLedgerByLedgerID(user_id, ledger_id) {
   try {
-    const [result] = await pool.query(
-      `
-            DELETE FROM ledgers 
-            WHERE ledger_id = ?
-          `,
-      [ledger_id]
+    // First, delete from the ledgers table
+    const [result1] = await pool.query(
+      `DELETE FROM ledgers WHERE user_id = ? AND ledger_id = ?`,
+      [user_id, ledger_id]
     );
-    if (result.affectedRows === 0) {
-      //   throw new Error(`Ledger with id ${ledger_id} not found`);
+    // Then, delete from the ledger_sharing table
+    const [result2] = await pool.query(
+      `DELETE FROM ledger_sharing WHERE user_id = ? AND ledger_id = ?`,
+      [user_id, ledger_id]
+    );
+    if (result1.affectedRows === 0 && result2.affectedRows === 0) {
       console.log(`Ledger with id ${ledger_id} not found`);
+      return { message: `Ledger with id ${ledger_id} not found` };
     } else {
+      // Then check whether ledger_id available in ledger_sharing and ledgers table
+      const [numberOfLedgers] = await pool.query(
+        `SELECT *
+        FROM ledgers l
+        WHERE l.ledger_id = ?
+        UNION
+        SELECT *
+        FROM ledger_sharing ls
+        WHERE ls.ledger_id = ?`,
+        [ledger_id, ledger_id]
+      );
+      if (numberOfLedgers.length === 0) {
+        const [deleteUnwantedLedgers] = await pool.query(
+          `DELETE FROM particulars WHERE ledger_id = ?`,
+          [ledger_id]
+        );
+      } else {
+        console.log("Hello: I am not empty: ", numberOfLedgers);
+      }
       return {
         message: "Ledger deleted successfully",
       };
@@ -202,11 +234,10 @@ export async function deleteLedgerByLedgerID(ledger_id) {
   } catch (error) {
     console.error("Error deleting ledger:", error);
     return { error: "Error deleting ledger" };
-    // throw error;
   }
 }
 
-// PARTICULARS
+//  PARTICULARS
 export async function getAllParticularsByLedgerID(ledger_id) {
   try {
     const [result] = await pool.query(
@@ -302,7 +333,7 @@ export async function deleteParticularByParticularID(particular_id) {
   }
 }
 
-// ENTRIES
+//  ENTRIES
 export async function getAllEntriesByParticularID(particular_id) {
   try {
     const [result] = await pool.query(
@@ -408,8 +439,8 @@ export async function deleteEntryByEntryID(entry_id) {
   }
 }
 
-// EXTRA FUNCTIONS
-// Calculate the sum in one specific ledger
+//  EXTRA FUNCTIONS
+//  Calculate the sum in one specific ledger
 export async function getSumAmountFromSpecificLedger(ledger_id) {
   try {
     const [result] = await pool.query(
@@ -431,7 +462,7 @@ export async function getSumAmountFromSpecificLedger(ledger_id) {
     return { error: "Error getting sum amount from specific ledger." };
   }
 }
-// Calculate the sum in one specific particular
+//  Calculate the sum in one specific particular
 export async function getSumAmountFromSpecificParticular(particular_id) {
   try {
     const [result] = await pool.query(
@@ -449,7 +480,7 @@ export async function getSumAmountFromSpecificParticular(particular_id) {
     return { error: "Error getting sum amount from specific particular." };
   }
 }
-// Get data from different coloumns to create PDF/AccountBook file to share
+//  Get data from different coloumns to create PDF/AccountBook file to share
 export async function createPDFSpecificLedger(ledger_id) {
   try {
     const [result] = await pool.query(
@@ -475,7 +506,7 @@ export async function createPDFSpecificLedger(ledger_id) {
     };
   }
 }
-// Get Access_key for particular ledger
+//  Get Access_key for particular ledger
 export async function getAccessKeyForLedger(user_id, ledger_id) {
   try {
     const [result] = await pool.query(
@@ -493,13 +524,13 @@ export async function getAccessKeyForLedger(user_id, ledger_id) {
     return { error: "Error geting access key for the ledger" };
   }
 }
-// Get ledger with access key
+//  Get ledger with access key
 export async function shareCopyOfLedgerWithAccessKey(user_id, access_key) {
   try {
     const [result] = await pool.query(
       `
-        INSERT INTO ledger_sharing (ledger_id, user_id)
-        SELECT ledger_id, ?
+        INSERT INTO ledger_sharing (ledger_id, user_id, ledger_name, access_key, created_at, updated_at)
+        SELECT ledger_id, ?, ledger_name, access_key, created_at, NOW()
         FROM ledgers
         WHERE access_key = ?;
         `,
@@ -512,7 +543,18 @@ export async function shareCopyOfLedgerWithAccessKey(user_id, access_key) {
     return { error: "Error creating duplicate of ledger for user id" };
   }
 }
+//  Function for random access_key generator
+function generateRandomString(length = 10) {
+  const characters =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  const charactersLength = characters.length;
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
+}
 
-//   Testing Commands
-// const clients = await createCopyOfLedgerWithAccessKey(2, "a224beb824");
+//  Testing Commands
+// const clients = await authenticateUser("0345-2057798");
 // console.log("clients", clients);
